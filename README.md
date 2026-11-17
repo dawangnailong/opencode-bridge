@@ -54,6 +54,7 @@ Console 按量付费。
 |---|---|
 | OpenAI Chat Completions | `/openai/v1/chat/completions` |
 | OpenAI Responses | `/openai/v1/responses` |
+| Anthropic Messages | `/anthropic/v1/messages` |
 | 模型列表 | `/v1/models` |
 
 例如：
@@ -70,6 +71,7 @@ Go:      https://opencode.ai/inference/go/openai/v1/chat/completions
 
 - `Authorization: Bearer oc_sk_...`
 - `x-opencode-session: ses_...`：Go 要求必须带；Console 也建议带。
+- Anthropic Messages 额外发送 `anthropic-version: 2023-06-01`；当前 OpenCode 文档没有把它列为必需，但 Anthropic 兼容客户端通常需要它。
 - 每个文本模型都可以通过其他 API 形状调用，由 Console 转换。
 - Console 的 free-tier chat models 只允许 OpenCode 内部使用；其他客户端会收到 403。
   请使用 paid models 或 Go。
@@ -123,9 +125,14 @@ my-browser-coding-agent/1.0
 
 请使用诚实的标识；不要冒充 Claude Code、Codex、OpenCode 或其他已验证客户端。
 
-> DNR 的 User-Agent 规则使用 session rule + `tabIds: [-1]`，目标是只影响扩展后台发起
-> 的请求，不影响用户自己在 `opencode.ai` 标签页里的浏览。不同 Chrome 版本的行为建议
-> 用 mock server 抓包确认。
+> DNR 的 User-Agent 规则使用 session rule + `requestDomains: [host]` +
+> `tabIds: [-1]`。Chrome 文档说明 `tabIds: [-1]`（`TAB_ID_NONE`）匹配“不来自 tab”
+> 的请求，因此它作用于发往该 host 的非 tab 请求，包括扩展 Service Worker/offscreen
+> 的 fetch；用户自己在 `opencode.ai` 标签页里的请求带 tabId，不会被匹配。
+>
+> 这不是严格的“只限扩展 initiator”过滤器：规则没有使用 `initiatorDomains`，Chrome
+> 文档也没有确认 extension origin 可用于该字段。不同 Chrome 版本的实际行为建议用
+> mock server 抓包确认。
 
 ### Allowed origins
 
@@ -201,6 +208,27 @@ const response = await conversation.responses.create({
 });
 ```
 
+### Anthropic Messages
+
+```js
+const stream = await conversation.messages.create({
+  model: "claude-haiku-5-5",
+  max_tokens: 128,
+  messages: [{ role: "user", content: "Say hi." }],
+  stream: true
+});
+
+for await (const event of stream) {
+  // Anthropic 事件原样透传，例如 content_block_delta / message_stop。
+  if (event?.type === "content_block_delta") {
+    console.log(event.delta?.text);
+  }
+}
+```
+
+第一版是文本传输；`system` 支持字符串或 Anthropic content-block 数组，`tools` 原样透传。
+Anthropic 流不以 `[DONE]` 结束，SDK 在流关闭时正常结束迭代。
+
 ### Session ID
 
 `createConversation()` 会生成一个稳定的 `ses_...`，同一 conversation 的所有请求都会
@@ -234,7 +262,7 @@ controller.abort();
 const conversation = bridge.createConversation();
 
 const openaiCompatibleFetch = conversation.createFetch({
-  // 默认只匹配路径以 /chat/completions 或 /responses 结尾的请求。
+  // 默认匹配 /chat/completions、/responses 和 /anthropic/v1/messages。
   // 只对 OpenCode 客户端使用时，建议显式限制：
   matchUrl: (url) => url.includes("opencode.ai/inference")
 });
@@ -277,7 +305,7 @@ python3 -m http.server 8000
 {
   type: "request",
   requestId: "req_...",
-  api: "chat.completions" | "responses" | "models.list",
+  api: "chat.completions" | "responses" | "anthropic.messages" | "models.list",
   body: { ... },       // models.list 时为 null
   sessionId: "ses_..." // 可选；扩展会生成
 }
@@ -410,7 +438,7 @@ CHROME_BIN=/usr/lib/chromium/chromium npm run test:browser
 它会启动一个临时 profile、加载扩展，并跑：
 
 - options/storage/DNR/offscreen 创建；
-- 内部可信端口 + stubbed offscreen fetch 的流式/非流式/Responses/错误/取消；
+- 内部可信端口 + stubbed offscreen fetch 的流式/非流式/Responses/Anthropic Messages/错误/取消；
 - 首字节延迟（`--first-byte`）和 6 分钟长流（`--long`）；
 - offscreen 中途关闭、重建恢复、Service Worker 中途停止。
 

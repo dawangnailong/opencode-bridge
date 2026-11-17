@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildEndpoints,
   byteLength,
+  endpointFor,
   isForbiddenCustomHost,
   isOriginAllowed,
   isValidRequestId,
@@ -74,7 +75,67 @@ test("detects private address literals", () => {
   assert.equal(isForbiddenCustomHost("172.16.0.1"), true);
   assert.equal(isForbiddenCustomHost("192.168.1.1"), true);
   assert.equal(isForbiddenCustomHost("169.254.169.254"), true);
-  assert.equal(isForbiddenCustomHost("example.com"), false);
+  assert.equal(isForbiddenCustomHost("0.1.2.3"), true);
+  assert.equal(isForbiddenCustomHost("192.0.2.1"), true);
+  assert.equal(isForbiddenCustomHost("198.18.0.1"), true);
+  assert.equal(isForbiddenCustomHost("198.51.100.1"), true);
+  assert.equal(isForbiddenCustomHost("203.0.113.1"), true);
+  assert.equal(isForbiddenCustomHost("224.0.0.1"), true);
+  assert.equal(isForbiddenCustomHost("255.255.255.255"), true);
+  assert.equal(isForbiddenCustomHost("123.example.com"), false);
+  assert.equal(isForbiddenCustomHost("8.8.8.8"), false);
+});
+
+test("detects private and reserved IPv6 custom hosts", () => {
+  for (const host of [
+    "[::]",
+    "[::1]",
+    "[::0:1]",
+    "[0:0:0:0:0:0:0:1]",
+    "[::ffff:127.0.0.1]",
+    "[::ffff:10.0.0.1]",
+    "[::ffff:192.168.1.1]",
+    "[fe80::1]",
+    "[fec0::1]",
+    "[fc00::1]",
+    "[fd12:3456:789a::1]",
+    "[2001:db8::1]",
+    "[64:ff9b::127.0.0.1]",
+    "[2002:7f00:1::]",
+    "localhost.",
+    "metadata.google.internal."
+  ]) {
+    assert.equal(isForbiddenCustomHost(host), true, host);
+  }
+
+  assert.equal(isForbiddenCustomHost("[::ffff:8.8.8.8]"), false);
+  assert.equal(isForbiddenCustomHost("[2606:4700:4700::1111]"), false);
+  assert.equal(isForbiddenCustomHost("[2001:4860:4860::8888]"), false);
+});
+
+test("rejects private IPv6 and reserved IPv4 custom base URLs", () => {
+  for (const host of [
+    "[::1]",
+    "[::]",
+    "[::ffff:127.0.0.1]",
+    "[fe80::1]",
+    "[fc00::1]",
+    "[2001:db8::1]",
+    "[64:ff9b::127.0.0.1]",
+    "0.1.2.3",
+    "192.0.2.1",
+    "198.18.0.1",
+    "203.0.113.1",
+    "240.0.0.1",
+    "localhost."
+  ]) {
+    assert.equal(parseBaseUrl(`https://${host}/`).ok, false, host);
+  }
+
+  assert.deepEqual(parseBaseUrl("https://[2606:4700:4700::1111]/"), {
+    ok: true,
+    baseUrl: "https://[2606:4700:4700::1111]"
+  });
 });
 
 test("builds provider base URLs", () => {
@@ -83,12 +144,15 @@ test("builds provider base URLs", () => {
 });
 
 test("builds endpoint paths", () => {
-  assert.deepEqual(buildEndpoints("https://opencode.ai/inference/go/"), {
+  const endpoints = buildEndpoints("https://opencode.ai/inference/go/");
+  assert.deepEqual(endpoints, {
     base: "https://opencode.ai/inference/go",
     chat: "https://opencode.ai/inference/go/openai/v1/chat/completions",
     responses: "https://opencode.ai/inference/go/openai/v1/responses",
+    messages: "https://opencode.ai/inference/go/anthropic/v1/messages",
     models: "https://opencode.ai/inference/go/v1/models"
   });
+  assert.equal(endpointFor("anthropic.messages", endpoints), "https://opencode.ai/inference/go/anthropic/v1/messages");
 });
 
 test("accepts a valid chat request body", () => {
@@ -105,6 +169,63 @@ test("accepts a valid responses request body", () => {
     input: "hi",
     stream: false
   }).ok, true);
+});
+
+test("accepts valid anthropic messages bodies", () => {
+  assert.equal(validateRequestBody("anthropic.messages", {
+    model: "claude-haiku-5-5",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hi" }]
+  }).ok, true);
+  assert.equal(validateRequestBody("anthropic.messages", {
+    model: "claude-haiku-5-5",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hi" }],
+    system: "you are helpful",
+    tools: [],
+    stream: true
+  }).ok, true);
+  assert.equal(validateRequestBody("anthropic.messages", {
+    model: "claude-haiku-5-5",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hi" }],
+    system: [{ type: "text", text: "you are helpful" }]
+  }).ok, true);
+});
+
+test("rejects invalid anthropic messages bodies", () => {
+  const base = {
+    model: "claude-haiku-5-5",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hi" }]
+  };
+
+  for (const maxTokens of [undefined, 0, -1, 4096.5, "4096"]) {
+    assert.equal(validateRequestBody("anthropic.messages", {
+      ...base,
+      max_tokens: maxTokens
+    }).ok, false, String(maxTokens));
+  }
+  assert.equal(validateRequestBody("anthropic.messages", {
+    model: "claude-haiku-5-5",
+    max_tokens: 128
+  }).ok, false);
+  assert.equal(validateRequestBody("anthropic.messages", {
+    ...base,
+    messages: "not an array"
+  }).ok, false);
+  assert.equal(validateRequestBody("anthropic.messages", {
+    ...base,
+    system: 123
+  }).ok, false);
+  assert.equal(validateRequestBody("anthropic.messages", {
+    ...base,
+    system: ["not a block"]
+  }).ok, false);
+  assert.equal(validateRequestBody("anthropic.messages", {
+    ...base,
+    tools: {}
+  }).ok, false);
 });
 
 test("rejects missing models and non-boolean stream", () => {

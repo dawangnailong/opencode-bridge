@@ -54,6 +54,15 @@ Open `http://localhost:8000/demo/` and `chrome://extensions` in Chrome.
 - [ ] `stream_options.include_usage` final usage/cost is visible.
 - [ ] Chat Completions to a Claude/Gemini model works or returns the documented
       upstream error.
+- [ ] Anthropic Messages non-stream returns a JSON body with `type: "message"`.
+- [ ] Anthropic Messages stream forwards `event:` frames and ends on stream
+      close; no `[DONE]` sentinel is required.
+- [ ] Anthropic request sends `Authorization`, `x-opencode-session`,
+      `anthropic-version: 2023-06-01`, and `Accept: text/event-stream` (verify
+      via mock-server log or DevTools).
+- [ ] Missing `max_tokens` is rejected locally with `BAD_REQUEST`.
+- [ ] Anthropic upstream 4xx/5xx keeps status and body.
+- [ ] Anthropic cancel aborts the upstream request.
 
 ## Streaming and lifecycle
 
@@ -91,9 +100,10 @@ Open `http://localhost:8000/demo/` and `chrome://extensions` in Chrome.
 - [ ] Extension logs contain no prompts, responses, or API keys.
 - [ ] `chrome.storage.local.setAccessLevel` is called; no content script can
       read the key.
-- [ ] DNR User-Agent rule applies to extension requests and does not alter the
-      user's own `opencode.ai` tab requests (verify with a mock server or
-      DevTools).
+- [ ] DNR User-Agent rule uses `requestDomains: [host]` + `tabIds: [-1]`; it
+      applies to non-tab extension/offscreen requests and does not alter the
+      user's own `opencode.ai` tab requests. It is not a strict
+      extension-initiator-only filter (verify with a mock server or DevTools).
 
 ## Policy documentation
 

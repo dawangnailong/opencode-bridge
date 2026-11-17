@@ -89,3 +89,18 @@ test("dispatches empty data fields", () => {
   assert.equal(events.length, 1);
   assert.equal(events[0].data, "");
 });
+
+test("passes Anthropic event names and JSON data through", () => {
+  const parser = new SSEParser();
+  const events = parser.feed(
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n'
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, "content_block_delta");
+  assert.deepEqual(JSON.parse(events[0].data), {
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "text_delta", text: "hi" }
+  });
+});

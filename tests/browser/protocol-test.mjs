@@ -51,6 +51,20 @@ await options.waitFor(async () => {
   return text.includes("saved");
 }, 5000);
 
+let dnrRules = [];
+await swCdp.waitFor(async () => {
+  dnrRules = await swCdp.evaluate("chrome.declarativeNetRequest.getSessionRules()");
+  return Array.isArray(dnrRules) && dnrRules.length > 0;
+}, 5000).catch(() => {});
+const dnrOk = Array.isArray(dnrRules) && dnrRules.some((rule) => (
+  rule.condition?.requestDomains?.includes("opencode.ai")
+  && rule.condition?.tabIds?.includes(-1)
+  && rule.action?.requestHeaders?.some((header) => (
+    header.header === "user-agent" && header.value === "ocb-browser-test/1.0"
+  ))
+));
+check("DNR UA rule scoped to non-tab opencode.ai", dnrOk, JSON.stringify(dnrRules));
+
 // Pre-create the offscreen executor and install a controllable fetch stub.
 const created = await swCdp.evaluate(`
   chrome.offscreen.createDocument({
@@ -169,7 +183,69 @@ const responsesChunks = await options.evaluate(`
 const responsesText = responsesChunks.map((c) => c?.delta || "").join("");
 check("responses stream text", responsesText === "AB", responsesText);
 
-// 5. Cancellation.
+// 5. Anthropic Messages stream (no [DONE] sentinel).
+await setStub({ mode: "stream", anthropic: true, frames: ["he", "llo"] });
+const anthropicChunks = await options.evaluate(`
+  (async () => {
+    const stream = await self.__conversation.messages.create({
+      model: 'mock-stream',
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true
+    });
+    const out = [];
+    for await (const chunk of stream) out.push(chunk);
+    return out;
+  })()
+`);
+const anthropicText = anthropicChunks.map((c) => c?.delta?.text || "").join("");
+check("anthropic stream text", anthropicText === "hello", anthropicText);
+check("anthropic stream event count", anthropicChunks.length === 3, String(anthropicChunks.length));
+const anthropicLast = await offscreen.evaluate("self.__lastRequest");
+check("anthropic url", String(anthropicLast?.url || "").endsWith("/anthropic/v1/messages"), String(anthropicLast?.url));
+check("anthropic authorization", anthropicLast?.headers?.Authorization === "Bearer oc_sk_browser_test", JSON.stringify(anthropicLast?.headers));
+check("anthropic session", anthropicLast?.headers?.["x-opencode-session"] === "ses_browser_test", JSON.stringify(anthropicLast?.headers));
+check("anthropic stream accept", anthropicLast?.headers?.Accept === "text/event-stream", JSON.stringify(anthropicLast?.headers));
+check("anthropic version", anthropicLast?.headers?.["anthropic-version"] === "2023-06-01", JSON.stringify(anthropicLast?.headers));
+check("anthropic body max_tokens", String(anthropicLast?.body || "").includes('"max_tokens":64'), String(anthropicLast?.body));
+
+// 6. Anthropic Messages non-stream.
+await setStub({ mode: "json", anthropic: true });
+const anthropicNonStream = await options.evaluate(`
+  (async () => {
+    const r = await self.__conversation.messages.create({
+      model: 'mock-echo',
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: false
+    });
+    return { status: r.status, json: r.json };
+  })()
+`);
+check("anthropic non-stream status", anthropicNonStream.status === 200, JSON.stringify(anthropicNonStream));
+check("anthropic non-stream json", anthropicNonStream.json?.type === "message", JSON.stringify(anthropicNonStream));
+const anthropicNonStreamLast = await offscreen.evaluate("self.__lastRequest");
+check("anthropic non-stream accept", anthropicNonStreamLast?.headers?.Accept === "application/json", JSON.stringify(anthropicNonStreamLast?.headers));
+check("anthropic non-stream version", anthropicNonStreamLast?.headers?.["anthropic-version"] === "2023-06-01", JSON.stringify(anthropicNonStreamLast?.headers));
+
+// 7. Anthropic local validation.
+const anthropicInvalid = await options.evaluate(`
+  (async () => {
+    try {
+      await self.__conversation.messages.create({
+        model: 'mock-echo',
+        messages: [],
+        stream: false
+      });
+      return { none: true };
+    } catch (e) {
+      return { code: e.code, message: e.message };
+    }
+  })()
+`);
+check("anthropic missing max_tokens rejected", anthropicInvalid.code === "BAD_REQUEST", JSON.stringify(anthropicInvalid));
+
+// 8. Cancellation.
 await setStub({ mode: "endless", intervalMs: 50 });
 const cancelPromise = options.evaluate(`
   (async () => {
@@ -194,6 +270,34 @@ check("cancel code", cancelResult.code === "ABORTED", JSON.stringify(cancelResul
 check("cancel after chunks", cancelResult.count >= 2, JSON.stringify(cancelResult));
 const stubCancelled = await offscreen.evaluate("!!self.__stubCancelled");
 check("offscreen stream cancelled", stubCancelled === true, String(stubCancelled));
+
+// 9. Anthropic cancellation.
+await setStub({ mode: "endless", anthropic: true, intervalMs: 50 });
+const anthropicCancel = await options.evaluate(`
+  (async () => {
+    const controller = new AbortController();
+    const stream = await self.__conversation.messages.create({
+      model: 'mock-cancel',
+      max_tokens: 64,
+      messages: [],
+      stream: true
+    }, { signal: controller.signal });
+    let count = 0;
+    try {
+      for await (const chunk of stream) {
+        count += 1;
+        if (count >= 2) controller.abort();
+      }
+      return { done: true, count };
+    } catch (e) {
+      return { code: e.code, count };
+    }
+  })()
+`);
+check("anthropic cancel code", anthropicCancel.code === "ABORTED", JSON.stringify(anthropicCancel));
+check("anthropic cancel after chunks", anthropicCancel.count >= 2, JSON.stringify(anthropicCancel));
+const anthropicCancelled = await offscreen.evaluate("!!self.__stubCancelled");
+check("anthropic offscreen stream cancelled", anthropicCancelled === true, String(anthropicCancelled));
 
 if (runFirstByte) {
   console.log("Running first-byte-delay test (35s)...");
@@ -264,7 +368,10 @@ function installStub() {
       }, url);
     }
     if (config.mode === "json") {
-      return makeResponse(JSON.stringify({ ok: true, url }), 200, {
+      const body = config.anthropic
+        ? { id: "msg_mock", type: "message", role: "assistant", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn" }
+        : { ok: true, url };
+      return makeResponse(JSON.stringify(body), 200, {
         "content-type": "application/json",
         "x-request-id": "stub-json"
       }, url);
@@ -294,27 +401,39 @@ function installStub() {
           else opts.signal.addEventListener("abort", onAbort, { once: true });
         }
 
+        const endChunk = config.anthropic
+          ? 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+          : "data: [DONE]\n\n";
         const startedAt = Date.now();
         timer = setInterval(() => {
           const elapsed = Date.now() - startedAt;
           if (durationMs && elapsed >= durationMs) {
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.enqueue(encoder.encode(endChunk));
             clearInterval(timer);
             controller.close();
             return;
           }
           if (!endless && !durationMs && sent >= frames.length) {
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.enqueue(encoder.encode(endChunk));
             clearInterval(timer);
             controller.close();
             return;
           }
           const text = frames[sent % frames.length];
           sent += 1;
-          const payload = config.responses
-            ? { type: "response.output_text.delta", delta: text }
-            : { choices: [{ delta: { content: text } }] };
-          controller.enqueue(encoder.encode("data: " + JSON.stringify(payload) + "\n\n"));
+          let chunk;
+          if (config.anthropic) {
+            chunk = "event: content_block_delta\ndata: " + JSON.stringify({
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text }
+            }) + "\n\n";
+          } else if (config.responses) {
+            chunk = "data: " + JSON.stringify({ type: "response.output_text.delta", delta: text }) + "\n\n";
+          } else {
+            chunk = "data: " + JSON.stringify({ choices: [{ delta: { content: text } }] }) + "\n\n";
+          }
+          controller.enqueue(encoder.encode(chunk));
         }, interval);
       },
       cancel() {

@@ -139,7 +139,12 @@ async function send() {
   const api = $("api").value;
   const stream = $("stream").checked;
   const body = api === "chat"
-    ? { model, messages: [{ role: "user", content: prompt }], stream }
+    ? {
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream,
+        ...(stream ? { stream_options: { include_usage: true } } : {})
+      }
     : { model, input: prompt, stream };
 
   $("output").textContent = "";
@@ -248,15 +253,54 @@ function appendRaw(event) {
 function showUsage(value) {
   const usage = value?.usage || value?.response?.usage;
   if (!usage) return;
-  const cost = usage.opencode?.cost;
-  const allowance = usage.opencode?.allowance;
+
+  const opencode = usage.opencode || {};
+  const billed = opencode.tokens || {};
+  const input = firstNumber(usage.prompt_tokens, usage.input_tokens, billed.input);
+  const output = firstNumber(usage.completion_tokens, usage.output_tokens, billed.output);
+  const total = firstNumber(
+    usage.total_tokens,
+    input != null && output != null ? input + output : null
+  );
+  const cost = firstNumber(usage.cost, opencode.cost);
+  const allowance = firstNumber(opencode.allowance);
+  const reasoning = firstNumber(
+    usage.completion_tokens_details?.reasoning_tokens,
+    billed.reasoning
+  );
+  const cacheRead = firstNumber(
+    usage.prompt_tokens_details?.cached_tokens,
+    usage.cache_read_input_tokens,
+    billed.cache_read
+  );
+  const cacheWrite5m = firstNumber(billed.cache_write_5m);
+  const cacheWrite1h = firstNumber(billed.cache_write_1h);
+  const cacheWrite = firstNumber(
+    usage.cache_creation_input_tokens,
+    cacheWrite5m != null || cacheWrite1h != null
+      ? (cacheWrite5m || 0) + (cacheWrite1h || 0)
+      : null
+  );
+
   const pieces = [];
-  if (usage.total_tokens != null) pieces.push(`${usage.total_tokens} tokens`);
-  if (usage.prompt_tokens != null) pieces.push(`${usage.prompt_tokens} in`);
-  if (usage.completion_tokens != null) pieces.push(`${usage.completion_tokens} out`);
+  if (total != null) pieces.push(`${total} tokens`);
+  if (input != null) pieces.push(`${input} in`);
+  if (output != null) pieces.push(`${output} out`);
+  if (reasoning != null && reasoning > 0) pieces.push(`${reasoning} reasoning`);
+  if (cacheRead != null && cacheRead > 0) pieces.push(`${cacheRead} cached`);
+  if (cacheWrite != null && cacheWrite > 0) pieces.push(`${cacheWrite} cache write`);
   if (cost != null) pieces.push(`$${cost}`);
   if (allowance != null) pieces.push(`Go allowance $${allowance}`);
   $("usage").textContent = pieces.join(" · ");
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return null;
 }
 
 async function listModels() {

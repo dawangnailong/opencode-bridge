@@ -18,6 +18,7 @@ The bridge stores the provider as `console`, `go`, or `custom`. It builds:
 ```text
 {base}/openai/v1/chat/completions
 {base}/openai/v1/responses
+{base}/anthropic/v1/messages
 {base}/v1/models
 ```
 
@@ -27,11 +28,15 @@ The bridge stores the provider as `console`, `go`, or `custom`. It builds:
 Authorization: Bearer oc_sk_...
 Content-Type: application/json
 x-opencode-session: ses_...
+anthropic-version: 2023-06-01   # only for anthropic.messages
 ```
 
 - `Authorization` is always injected from local storage.
-- `x-opencode-session` is sent for chat/responses; it is not sent for
-  `models.list`.
+- `x-opencode-session` is sent for chat/responses/anthropic.messages; it is not
+  sent for `models.list`.
+- `anthropic-version` is set by the bridge only for `anthropic.messages`.
+  Current OpenCode docs do not list it as required; it is sent for Anthropic
+  client compatibility.
 - Go requires a stable session ID. Console recommends one.
 - The SDK generates a `ses_` ID per conversation and reuses it for all turns,
   tool calls, retries, and model switches in that conversation.
@@ -57,8 +62,13 @@ opencode-bridge/0.1.0
 The value is configurable in the options page. Do not configure a value that
 impersonates Claude Code, Codex, OpenCode, or another validated client.
 
-> Verify on the target Chrome version that the DNR rule applies to service
-> worker fetches and does not affect requests in the user's `opencode.ai` tabs.
+> `tabIds: [-1]` is documented as `TAB_ID_NONE`, matching requests that do not
+> originate from a tab. The rule therefore targets non-tab requests to the
+> configured host, including extension service-worker/offscreen fetches, and
+> excludes tab-originating requests such as the user's own `opencode.ai` tabs.
+> It is not a strict extension-initiator-only rule: `initiatorDomains` is not
+> used, and Chrome docs do not establish extension-origin support for it.
+> Verify the actual behavior on the target Chrome version.
 
 ## Model IDs
 
@@ -89,7 +99,12 @@ The bridge does not modify the body. It validates only:
 - `model` is a non-empty string;
 - `stream`, if present, is a boolean;
 - `messages` (Chat Completions), if present, is an array;
-- `input` (Responses), if present, is a string or array.
+- `input` (Responses), if present, is a string or array;
+- `messages` (Anthropic Messages) is an array;
+- `max_tokens` (Anthropic Messages) is a positive integer;
+- `system` (Anthropic Messages), if present, is a string or an array of
+  content-block objects;
+- `tools` (Anthropic Messages), if present, is an array.
 
 Callers are responsible for using the shape the endpoint expects:
 
@@ -109,10 +124,20 @@ Callers are responsible for using the shape the endpoint expects:
 }
 ```
 
-Anthropic Messages (`max_tokens` required) and Gemini's
-`:generateContent` / `:streamGenerateContent` path are not exposed by this MVP.
-Use the OpenAI-shaped endpoints; OpenCode translates for text models that use
-another native API.
+```json
+{
+  "model": "claude-haiku-5-5",
+  "max_tokens": 128,
+  "system": "You are helpful.",
+  "messages": [{ "role": "user", "content": "Say hi." }],
+  "stream": true
+}
+```
+
+Anthropic Messages is supported through `/anthropic/v1/messages`. Gemini's
+`:generateContent` / `:streamGenerateContent` path is not exposed by this MVP.
+Text models that use another native API can also be called through the
+OpenAI-shaped endpoints, where OpenCode translates the request.
 
 ## Streaming
 
@@ -125,6 +150,10 @@ another native API.
 - Chat Completions chunks are typically OpenAI `choices[].delta` objects.
 - Responses chunks use event types such as `response.output_text.delta` and
   `response.completed`.
+- Anthropic Messages streams use `event:` names such as `message_start`,
+  `content_block_delta`, `message_delta`, and `message_stop`. They are forwarded
+  unchanged; Anthropic does not require a `[DONE]` sentinel, and the SDK ends the
+  iterator when the stream closes.
 - The final usage/cost fields are forwarded if the upstream sends them. For
   Chat Completions, request `stream_options.include_usage: true` if you need the
   final usage chunk.
@@ -188,7 +217,10 @@ and the official OpenCode privacy documentation.
 ## Verification notes
 
 - Confirm on the target Chrome version that the DNR User-Agent rule applies to
-  service worker fetches. Chrome drops `User-Agent` set directly by `fetch`.
+  non-tab service worker/offscreen fetches. Chrome drops `User-Agent` set
+  directly by `fetch`. The rule is not an extension-initiator-only filter.
+- Confirm the upstream accepts `anthropic-version: 2023-06-01` on the Anthropic
+  Messages path; current OpenCode docs do not list it as required.
 - Observe whether the upstream receives an `Origin: chrome-extension://...`
   header. `Origin` is a forbidden request header and cannot be forged from
   `fetch`; if the API rejects extension origins, that is a platform blocker
@@ -212,6 +244,8 @@ and the official OpenCode privacy documentation.
 | Chat Completions, stream | SSE chunks, `[DONE]` ends |
 | Responses, non-stream | JSON body |
 | Responses, stream | Responses event types forwarded |
+| Anthropic Messages, non-stream | JSON body with `type: "message"` |
+| Anthropic Messages, stream | `event:` frames forwarded; ends on stream close, no `[DONE]` required |
 | Chat Completions request to Claude/Gemini model | Console translates or returns documented error |
 | Invalid model ID | Upstream 4xx forwarded |
 | No API key | `AUTH_MISSING` |

@@ -18,6 +18,7 @@ const CONNECT_TIMEOUT_MS = 25000;
 const MAX_ERROR_BODY = 65536;
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const MAX_EXTERNAL_PORTS = 32;
+const ANTHROPIC_VERSION = "2023-06-01";
 const OFFSCREEN_PORT_NAME = "opencode-offscreen";
 const OFFSCREEN_CONNECT_TIMEOUT_MS = 5000;
 
@@ -796,6 +797,23 @@ function releaseSlot(origin) {
   updateKeepAlive();
 }
 
+function buildUpstreamHeaders({ api, method, apiKey, sessionId, wantsStream }) {
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    Accept: wantsStream ? "text/event-stream" : "application/json"
+  };
+  if (method === "POST") {
+    headers["Content-Type"] = "application/json";
+  }
+  if (api !== "models.list") {
+    headers["x-opencode-session"] = sessionId;
+  }
+  if (api === "anthropic.messages") {
+    headers["anthropic-version"] = ANTHROPIC_VERSION;
+  }
+  return headers;
+}
+
 async function runViaOffscreen({ port, request, requestId, api, body, sessionId, settings, apiKey }) {
   const baseUrl = providerBaseUrl(settings.provider, settings.customBaseUrl);
   const endpoints = buildEndpoints(baseUrl);
@@ -817,12 +835,13 @@ async function runViaOffscreen({ port, request, requestId, api, body, sessionId,
   request.internalId = internalId;
 
   const wantsStream = body?.stream === true;
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-    Accept: wantsStream ? "text/event-stream" : "application/json",
-    "x-opencode-session": sessionId
-  };
+  const headers = buildUpstreamHeaders({
+    api,
+    method: "POST",
+    apiKey,
+    sessionId,
+    wantsStream
+  });
 
   let resolveDone;
   const done = new Promise((resolve) => {
@@ -889,16 +908,13 @@ async function runRequest({ port, state, request, requestId, api, body, sessionI
   const url = endpointFor(api, endpoints);
   const method = api === "models.list" ? "GET" : "POST";
 
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    Accept: body?.stream === true ? "text/event-stream" : "application/json"
-  };
-  if (method === "POST") {
-    headers["Content-Type"] = "application/json";
-  }
-  if (api !== "models.list") {
-    headers["x-opencode-session"] = sessionId;
-  }
+  const headers = buildUpstreamHeaders({
+    api,
+    method,
+    apiKey,
+    sessionId,
+    wantsStream: body?.stream === true
+  });
 
   const payload = method === "POST" ? JSON.stringify(body) : undefined;
   let timedOut = false;

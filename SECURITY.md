@@ -73,7 +73,7 @@ The page may send only:
 {
   type: "request",
   requestId: "req_...",
-  api: "chat.completions" | "responses" | "models.list",
+  api: "chat.completions" | "responses" | "anthropic.messages" | "models.list",
   body: object | null,
   sessionId: "ses_..." // optional
 }
@@ -85,6 +85,9 @@ The extension rejects:
 - non-object request bodies;
 - missing or oversized `model`;
 - non-boolean `stream`;
+- for `anthropic.messages`: missing/non-array `messages`, non-positive-integer
+  `max_tokens`, invalid `system` (not string/content-block array), or
+  non-array `tools`;
 - invalid request IDs or session IDs;
 - bodies larger than `maxBodyBytes` (default 4 MiB);
 - duplicate request IDs on the same port;
@@ -103,19 +106,31 @@ This prevents the extension from becoming an open proxy.
 
 ## Network behavior
 
-- Requests are made by the extension service worker with host permissions.
+- Requests are made by the extension service worker or its offscreen document
+  with host permissions.
 - `redirect: "error"` is used, so a 3xx response fails instead of silently
   forwarding credentials to another host.
 - The final `response.url` origin is checked against the configured base URL
   origin.
-- Custom base URLs must use HTTPS and may not use localhost or private address
-  literals (127/8, 10/8, 192.168/16, 172.16/12, 169.254/16, 100.64/10, `::1`,
-  `0.0.0.0`, `.localhost`). DNS rebinding on an allowed custom hostname is not
+- Custom base URLs must use HTTPS and may not use localhost or private/reserved
+  address literals. This includes IPv4 private, loopback, link-local, CGNAT,
+  documentation, multicast, and reserved ranges; IPv6 unspecified, loopback,
+  link-local, unique-local, multicast, documentation, IPv4-mapped/compatible,
+  NAT64, and 6to4 forms that embed a forbidden IPv4 address; and trailing-dot
+  `localhost` variants. DNS rebinding on an allowed custom hostname is not
   fully preventable from an extension; treat custom base URLs as trusted input.
 - Custom base URLs require an optional host permission granted from the options
   page.
 - The extension does not disable CORS, does not use `--disable-web-security`,
   and does not modify `Access-Control-Allow-Origin`.
+- The client User-Agent is set by a session-scoped DNR rule with
+  `requestDomains: [host]` and `tabIds: [-1]`. This matches non-tab requests to
+  the configured host, including extension service-worker/offscreen fetches,
+  and excludes tab-originating requests such as the user's own `opencode.ai`
+  tabs. It is not a strict extension-initiator-only rule; `initiatorDomains` is
+  not used.
+- `anthropic-version: 2023-06-01` is set by the bridge only for
+  `anthropic.messages`; it is not page-controlled.
 
 Residual risk: a user can intentionally configure a public custom base URL and
 send their key there. That is an explicit user decision; the options UI warns

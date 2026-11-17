@@ -143,6 +143,10 @@ export class Conversation {
       create: (body, requestOptions = {}) =>
         bridge._create("responses", body, this.sessionId, requestOptions)
     };
+    this.messages = {
+      create: (body, requestOptions = {}) =>
+        bridge._create("anthropic.messages", body, this.sessionId, requestOptions)
+    };
   }
 
   createFetch(options = {}) {
@@ -180,7 +184,9 @@ export class Conversation {
         ? "chat.completions"
         : path.endsWith("/responses")
           ? "responses"
-          : null;
+          : path.endsWith("/anthropic/v1/messages")
+            ? "anthropic.messages"
+            : null;
       if (!api) {
         return nativeFetch(input, init);
       }
@@ -781,7 +787,9 @@ function defaultMatchUrl(url) {
   try {
     const base = globalThis.location?.href || "https://opencode.ai/";
     const path = new URL(url, base).pathname;
-    return path.endsWith("/chat/completions") || path.endsWith("/responses");
+    return path.endsWith("/chat/completions")
+      || path.endsWith("/responses")
+      || path.endsWith("/anthropic/v1/messages");
   } catch {
     return false;
   }

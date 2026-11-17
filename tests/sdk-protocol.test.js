@@ -52,6 +52,25 @@ function installFakeExtension(mode = "stream") {
 
         if (mode === "stream") {
           queueMicrotask(() => emit({ type: "accepted", requestId: message.requestId, status: 200, headers: {} }));
+          if (message.api === "anthropic.messages") {
+            queueMicrotask(() => emit({
+              type: "chunk",
+              requestId: message.requestId,
+              data: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"he\"}}\n\n"
+            }));
+            queueMicrotask(() => emit({
+              type: "chunk",
+              requestId: message.requestId,
+              data: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"llo\"}}\n\n"
+            }));
+            queueMicrotask(() => emit({
+              type: "chunk",
+              requestId: message.requestId,
+              data: "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+            }));
+            queueMicrotask(() => emit({ type: "done", requestId: message.requestId }));
+            return;
+          }
           queueMicrotask(() => emit({
             type: "chunk",
             requestId: message.requestId,
@@ -67,13 +86,16 @@ function installFakeExtension(mode = "stream") {
           return;
         }
 
+        const responseBody = message.api === "anthropic.messages"
+          ? "{\"id\":\"msg_mock\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"stop_reason\":\"end_turn\"}"
+          : "{\"ok\":true}";
         queueMicrotask(() => emit({ type: "accepted", requestId: message.requestId, status: 200, headers: {} }));
         queueMicrotask(() => emit({
           type: "response",
           requestId: message.requestId,
           status: 200,
           headers: { "content-type": "application/json" },
-          body: "{\"ok\":true}"
+          body: responseBody
         }));
         queueMicrotask(() => emit({ type: "done", requestId: message.requestId }));
       }
@@ -154,6 +176,70 @@ test("rejects with upstream error details", async () => {
   bridge.close();
 });
 
+test("streams Anthropic Messages events without a DONE sentinel", async () => {
+  const fake = installFakeExtension("stream");
+  const bridge = new OpenCodeBridge({ extensionId: "test-extension" });
+  const conversation = bridge.createConversation({ sessionId: "ses_anthropic" });
+
+  const stream = await conversation.messages.create({
+    model: "claude-haiku-5-5",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hi" }],
+    stream: true
+  });
+
+  const chunks = [];
+  for await (const chunk of stream) {
+    if (typeof chunk?.delta?.text === "string") chunks.push(chunk.delta.text);
+  }
+
+  assert.deepEqual(chunks, ["he", "llo"]);
+  assert.equal(fake.requests[0].api, "anthropic.messages");
+  assert.equal(fake.requests[0].sessionId, "ses_anthropic");
+  bridge.close();
+});
+
+test("returns an Anthropic non-stream response", async () => {
+  const fake = installFakeExtension("response");
+  const bridge = new OpenCodeBridge({ extensionId: "test-extension" });
+  const conversation = bridge.createConversation();
+
+  const response = await conversation.messages.create({
+    model: "claude-haiku-5-5",
+    max_tokens: 128,
+    messages: [{ role: "user", content: "hi" }],
+    stream: false
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.json.type, "message");
+  assert.equal(response.json.content[0].text, "hi");
+  assert.equal(fake.requests[0].api, "anthropic.messages");
+  bridge.close();
+});
+
+test("rejects Anthropic Messages upstream errors", async () => {
+  installFakeExtension("error");
+  const bridge = new OpenCodeBridge({ extensionId: "test-extension" });
+  const conversation = bridge.createConversation();
+
+  await assert.rejects(
+    conversation.messages.create({
+      model: "claude-haiku-5-5",
+      max_tokens: 128,
+      messages: [{ role: "user", content: "hi" }],
+      stream: false
+    }),
+    (error) => {
+      assert.equal(error.code, "UPSTREAM_HTTP_ERROR");
+      assert.equal(error.status, 400);
+      assert.equal(error.body, "{\"error\":\"bad\"}");
+      return true;
+    }
+  );
+  bridge.close();
+});
+
 test("fetch adapter routes matching paths and ignores page auth", async () => {
   const fake = installFakeExtension("response");
   const bridge = new OpenCodeBridge({ extensionId: "test-extension" });
@@ -173,4 +259,61 @@ test("fetch adapter routes matching paths and ignores page auth", async () => {
   assert.deepEqual(await response.json(), { ok: true });
   assert.equal(fake.requests[0].sessionId, "ses_fetch");
   bridge.close();
+});
+
+test("fetch adapter routes Anthropic Messages paths", async () => {
+  const fake = installFakeExtension("response");
+  const bridge = new OpenCodeBridge({ extensionId: "test-extension" });
+  const conversation = bridge.createConversation({ sessionId: "ses_anthropic_fetch" });
+  const bridgeFetch = conversation.createFetch();
+
+  const response = await bridgeFetch(
+    "https://opencode.ai/inference/go/anthropic/v1/messages",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        model: "claude-haiku-5-5",
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hi" }],
+        stream: false
+      })
+    }
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).type, "message");
+  assert.equal(fake.requests[0].api, "anthropic.messages");
+  assert.equal(fake.requests[0].sessionId, "ses_anthropic_fetch");
+  bridge.close();
+});
+
+test("fetch adapter leaves a non-OpenCode /v1/messages request native", async () => {
+  const originalFetch = globalThis.fetch;
+  let nativeCalled = false;
+  globalThis.fetch = async () => {
+    nativeCalled = true;
+    return new Response("native", { status: 200 });
+  };
+
+  try {
+    const fake = installFakeExtension("response");
+    const bridge = new OpenCodeBridge({ extensionId: "test-extension" });
+    const conversation = bridge.createConversation();
+    const bridgeFetch = conversation.createFetch();
+
+    const response = await bridgeFetch(
+      "https://api.anthropic.com/v1/messages",
+      {
+        method: "POST",
+        body: JSON.stringify({ model: "x", max_tokens: 1, messages: [] })
+      }
+    );
+
+    assert.equal(nativeCalled, true);
+    assert.equal(await response.text(), "native");
+    assert.equal(fake.requests.length, 0);
+    bridge.close();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

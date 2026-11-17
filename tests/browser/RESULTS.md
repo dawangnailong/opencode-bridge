@@ -26,6 +26,23 @@ Environment:
   - `user-agent` set to the configured value
 - Offscreen document can be created and closed through the extension API.
 
+### Anthropic Messages transport (issue #1)
+
+- `conversation.messages.create(...)` stream: Anthropic `event:` frames pass
+  through; the iterator ends on stream close without a `[DONE]` sentinel.
+- Non-stream returns the Anthropic message JSON.
+- `anthropic-version: 2023-06-01` is sent only on the Anthropic path.
+- `Authorization` and `x-opencode-session` headers are injected as for other
+  inference requests; `Accept` switches between SSE and JSON.
+- Missing `max_tokens` is rejected locally with `BAD_REQUEST`.
+- Anthropic cancellation aborts the offscreen stream.
+- A non-OpenCode `/v1/messages` URL is not intercepted by the fetch adapter in
+  the SDK protocol test.
+- IPv6 private/reserved custom-base-URL forms (including IPv4-mapped, link-local,
+  unique-local, NAT64, 6to4, documentation, and `localhost.`) are rejected by
+  unit tests; a public IPv6 literal is accepted.
+- DNR session-rule configuration is asserted in the browser protocol test.
+
 ### Protocol / streaming (stubbed offscreen fetch)
 
 The tests use the real extension service worker, real offscreen document, real
