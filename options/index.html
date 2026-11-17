@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenCode Bridge Options</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Local transport bridge</p>
+          <h1>OpenCode Bridge</h1>
+          <p class="lede">
+            A thin local bridge for OpenCode Console and Go inference APIs. The page
+            never receives your API key.
+          </p>
+        </div>
+        <span class="version">v0.1.0</span>
+      </header>
+
+      <section class="card">
+        <h2>Provider</h2>
+        <label class="field">
+          <span>Plan / endpoint</span>
+          <select id="provider">
+            <option value="console">Console pay-as-you-go — https://opencode.ai/inference</option>
+            <option value="go">OpenCode Go — https://opencode.ai/inference/go</option>
+            <option value="custom">Custom HTTPS base URL</option>
+          </select>
+        </label>
+
+        <label class="field" id="customRow" hidden>
+          <span>Custom base URL</span>
+          <input
+            id="customBaseUrl"
+            type="url"
+            placeholder="https://example.com/inference"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <small>
+            HTTPS only. localhost and private addresses are rejected. Saving
+            requests optional host permission for this origin.
+          </small>
+        </label>
+
+        <p class="hint">
+          This extension does not inspect prompts, classify traffic as coding or
+          chat, or enforce OpenCode subscription rules. You choose the provider.
+          Read the official docs before using a subscription:
+          <a href="https://opencode.ai/docs/console/go" target="_blank" rel="noreferrer">Go</a>,
+          <a href="https://opencode.ai/docs/console/api/inference" target="_blank" rel="noreferrer">Inference API</a>.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>API key</h2>
+        <label class="field">
+          <span>OpenCode API key</span>
+          <input
+            id="apiKey"
+            type="password"
+            placeholder="oc_sk_..."
+            autocomplete="new-password"
+            spellcheck="false"
+          >
+          <small>
+            Stored in <code>chrome.storage.local</code>. It is not synced, not
+            logged, and never sent to a web page. Leave blank to keep the saved key.
+          </small>
+        </label>
+
+        <div class="row">
+          <label class="check">
+            <input id="showKey" type="checkbox">
+            <span>Show key while typing</span>
+          </label>
+          <button id="clearKey" class="button button-ghost" type="button">Clear saved key</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Client identity</h2>
+        <label class="field">
+          <span>Client User-Agent</span>
+          <input
+            id="clientUserAgent"
+            type="text"
+            placeholder="my-browser-coding-agent/1.0"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <small>
+            Sent through Chrome's declarativeNetRequest because Chrome drops
+            User-Agent set by fetch. Use an honest client name and version. Do not
+            impersonate a validated client.
+          </small>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Allowed web origins</h2>
+        <label class="field">
+          <span>Origins allowed to connect</span>
+          <textarea
+            id="allowedOrigins"
+            rows="6"
+            placeholder="https://app.example.com&#10;http://localhost:8000"
+            spellcheck="false"
+          ></textarea>
+          <small>
+            One exact origin per line. Scheme, host, and port must match. Paths,
+            queries, hashes, and wildcards are rejected. Default: no page can connect.
+          </small>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Extension ID</h2>
+        <p class="mono" id="extensionId">—</p>
+        <button id="copyExtensionId" class="button button-ghost" type="button">Copy extension ID</button>
+        <p class="hint">
+          Use this ID with <code>new OpenCodeBridge({ extensionId })</code> in your
+          web app. For unpacked builds, keep the extension installed at a stable
+          path or add a <code>key</code> to <code>manifest.json</code>.
+        </p>
+      </section>
+
+      <footer class="actions">
+        <button id="save" class="button" type="button">Save settings</button>
+        <span id="status" class="status" role="status" aria-live="polite"></span>
+      </footer>
+
+      <p class="footnote">
+        Not affiliated with OpenCode. This project does not provide API keys,
+        share subscriptions, bypass limits, or impersonate validated clients.
+      </p>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

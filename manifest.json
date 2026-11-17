@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "OpenCode Bridge",
+  "version": "0.1.0",
+  "description": "Local transport bridge for OpenCode Console and Go inference APIs.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "storage",
+    "alarms",
+    "offscreen",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "https://opencode.ai/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "options_page": "options/index.html",
+  "action": {
+    "default_title": "OpenCode Bridge options"
+  },
+  "externally_connectable": {
+    "matches": [
+      "http://*/*",
+      "https://*/*"
+    ]
+  }
+}

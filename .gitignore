@@ -1,0 +1,11 @@
+node_modules/
+.DS_Store
+*.log
+
+# Local browser test artifacts
+tests/browser/artifacts/
+tests/browser/.tmp/
+chrome-profile/
+*.pem
+*.crt
+*.key

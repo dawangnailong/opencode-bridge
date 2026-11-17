@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenCode Bridge Demo</title>
+    <link rel="stylesheet" href="demo.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Static page + local extension</p>
+          <h1>OpenCode Bridge Demo</h1>
+          <p class="lede">
+            This page calls OpenCode through the extension. The API key never
+            enters this page.
+          </p>
+        </div>
+        <span class="badge" id="connectionBadge">not connected</span>
+      </header>
+
+      <section class="card">
+        <h2>Connection</h2>
+        <div class="grid two">
+          <label class="field">
+            <span>Extension ID</span>
+            <input id="extensionId" type="text" placeholder="Paste the ID from chrome://extensions" autocomplete="off" spellcheck="false">
+            <small>Add this page's exact origin in the extension options first.</small>
+          </label>
+          <label class="field">
+            <span>Model</span>
+            <input id="model" type="text" value="kimi-k3" autocomplete="off" spellcheck="false">
+            <small>Use the API model ID, e.g. <code>kimi-k3</code>, not <code>opencode-go/kimi-k3</code>.</small>
+          </label>
+        </div>
+
+        <div class="grid two">
+          <label class="field">
+            <span>API shape</span>
+            <select id="api">
+              <option value="chat">OpenAI Chat Completions</option>
+              <option value="responses">OpenAI Responses</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Session</span>
+            <div class="session-row">
+              <input id="sessionId" type="text" readonly>
+              <button id="newConversation" class="button button-ghost" type="button">New</button>
+            </div>
+            <small>Stable per conversation. The demo keeps it until you press New.</small>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Request</h2>
+        <label class="field">
+          <span>Prompt</span>
+          <textarea id="prompt" rows="5" placeholder="Ask for a code idea, a review, or a small implementation..."></textarea>
+        </label>
+
+        <div class="row">
+          <label class="check">
+            <input id="stream" type="checkbox" checked>
+            <span>Stream (SSE)</span>
+          </label>
+          <div class="row-buttons">
+            <button id="modelsButton" class="button button-ghost" type="button">List models</button>
+            <button id="cancel" class="button button-ghost" type="button" disabled>Cancel</button>
+            <button id="send" class="button" type="button">Send</button>
+          </div>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card">
+        <div class="output-head">
+          <h2>Output</h2>
+          <span class="muted" id="usage"></span>
+        </div>
+        <pre id="output" class="output" aria-live="polite"></pre>
+      </section>
+
+      <details class="card raw-card">
+        <summary>Raw SSE events</summary>
+        <pre id="raw" class="output raw"></pre>
+      </details>
+
+      <p class="footnote">
+        This demo is not affiliated with OpenCode. It does not enforce subscription
+        policy; see the official docs for the current terms.
+      </p>
+    </main>
+
+    <script type="module" src="demo.js"></script>
+  </body>
+</html>
