@@ -1,6 +1,6 @@
 # OpenCode Bridge
 
-一个本地运行的浏览器扩展（Chrome / Safari，Manifest V3），为静态网页 /
+一个本地运行的浏览器扩展（Chrome / Safari / Firefox，Manifest V3），为静态网页 /
 browser coding agent 提供到 OpenCode Console 与 OpenCode Go 推理 API 的薄传输层。
 
 它只做四件事：
@@ -119,6 +119,30 @@ manifest 的 `key` 固定，ID 由 Xcode 工程里的 bundle identifier 决定�
 Safari 没有 `chrome.offscreen`，因此推理请求回退到 Service Worker fetch，受 25 秒
 首字节 / 5 分钟单请求计时约束。DNR User-Agent 规则在 Safari 上的支持度取决于版本；
 不支持时规则会被跳过，是否实际发送自定义 UA 请以抓包为准。
+
+---
+
+## 安装（Firefox）
+
+需要 Firefox 121+（MV3 background scripts）；声明式 NetRequest 的
+`declarativeNetRequestWithHostAccess` 权限别名需要 Firefox 126+，建议直接使用最新版。
+manifest 同时声明了 `background.service_worker`（Chrome / Safari 用）和
+`background.scripts`（Firefox 用），两边互不影响。
+
+1. 地址栏打开 `about:debugging#/runtime/this-firefox`。
+2. 点击「临时载入附加组件」（Load Temporary Add-on），选择本项目的 `manifest.json`。
+3. 打开扩展的「选项」页完成配置。
+
+注意：
+
+- **临时载入的扩展在 Firefox 重启后失效**，需要重新执行第 2 步。正式版 Firefox
+  只允许安装签名的附加组件；开发调试可换 Firefox Developer Edition，并在
+  `about:config` 设置 `xpinstall.signatures.required = false` 后从文件安装。
+- Firefox 不支持 `externally_connectable`，网页无法直连扩展 runtime；SDK 的 auto
+  模式会自动回退到 content script 中继（与 Safari 相同路径），无需额外配置。
+- Firefox 没有 `chrome.offscreen`，请求回退到后台事件页面（event page）内直接
+  fetch，不受 Chrome service worker 的计时约束。
+- 网页设置里要填的扩展 ID 以 `about:debugging` 中该扩展显示的 ID 为准。
 
 ---
 
